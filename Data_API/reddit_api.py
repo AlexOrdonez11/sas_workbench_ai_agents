@@ -1,6 +1,9 @@
 import praw
 import os
 import pandas as pd
+from datetime import datetime, timezone
+from pymongo import UpdateOne
+from db import posts_collection
 # Create a Reddit instance
 reddit = praw.Reddit(
     client_id=os.getenv("reddit_id"),
@@ -16,7 +19,7 @@ print(reddit.user.me())
 def fetch_pool(topic: str) -> pd.DataFrame:
     rows = []
     for s in reddit.subreddit("all").search(
-        query=topic, sort="top", time_filter=TIME_FILTER, syntax="lucene", limit=MAX_PULL
+        query=topic, sort="top", time_filter="month", syntax="lucene", limit=None
     ):
         rows.append({
             "submission_id": f"t3_{s.id}",
@@ -34,23 +37,25 @@ def fetch_pool(topic: str) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
-pool = fetch_pool(TOPIC)
-pool = pool[pool["over_18"] == False].copy()
+def insert_posts(TOPIC:str):
+    
+    pool = fetch_pool(TOPIC)
+    pool = pool[pool["over_18"] == False].copy()
 
-# top-5 per day by score
-top5 = (pool.sort_values(["date","score"], ascending=[True, False])
-             .groupby("date").head(5).reset_index(drop=True))
+    # top-5 per day by score
+    top5 = (pool.sort_values(["date","score"], ascending=[True, False])
+                .groupby("date").head(5).reset_index(drop=True))
 
-# Upsert posts (idempotent by submission_id)
-ops = []
-for doc in top5.to_dict("records"):
-    sid = doc["submission_id"]
-    ops.append(UpdateOne(
-        {"submission_id": sid},
-        {"$set": {**doc}},
-        upsert=True
-    ))
-if ops:
-    posts_coll.bulk_write(ops, ordered=False)
+    # Upsert posts (idempotent by submission_id)
+    ops = []
+    for doc in top5.to_dict("records"):
+        sid = doc["submission_id"]
+        ops.append(UpdateOne(
+            {"submission_id": sid},
+            {"$set": {**doc}},
+            upsert=True
+        ))
+    if ops:
+        posts_collection.bulk_write(ops, ordered=False)
 
-print(f"Days: {top5['date'].nunique()}  Docs upserted: {len(ops)}")
+    print(f"Days: {top5['date'].nunique()}  Docs upserted: {len(ops)}")
