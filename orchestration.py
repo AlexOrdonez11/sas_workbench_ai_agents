@@ -8,9 +8,9 @@ import saspy
 import matplotlib.pyplot as plt
 
 # Your modules
-from Data_API.db import db, posts_collection, daily_collection  # :contentReference[oaicite:3]{index=3}
-from Data_API.reddit_api import insert_posts                    # :contentReference[oaicite:4]{index=4}
-from Agents.post_analysis import insert_analysis                # :contentReference[oaicite:5]{index=5}
+from Data_API.db import db, posts_collection, daily_collection  
+from Data_API.reddit_api import insert_posts                   
+from Agents.post_analysis import insert_analysis               
 
 st.set_page_config(page_title="Reddit 30-Day Topic Insight", layout="wide")
 
