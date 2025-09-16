@@ -3,11 +3,9 @@ import os
 import json
 from datetime import datetime
 from pydantic import BaseModel, Field
-from pymongo import UpdateOne
-from langchain.tools import tool
 from db import posts_collection as posts_coll, daily_collection as daily_coll
 
-genai.configure(api_key=os.getenv["GEMINI_API_KEY"])
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 GEM_MODEL = genai.GenerativeModel(model_name="gemini-2.5-flash")
 
 
