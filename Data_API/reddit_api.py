@@ -1,9 +1,9 @@
 import praw
-import os
+import os, re
 import pandas as pd
 from datetime import datetime, timezone
 from pymongo import UpdateOne
-from db import posts_collection
+from Data_API.db import posts_collection
 # Create a Reddit instance
 reddit = praw.Reddit(
     client_id=os.getenv("reddit_id"),
@@ -16,11 +16,41 @@ reddit = praw.Reddit(
 # Test the connection: print your own username
 print(reddit.user.me())
 
+def lucene_query_for_topic(topic: str) -> str:
+    """
+    Build a strict Lucene query targeting both title and selftext.
+    Handles phrases and a compact variant (no spaces/hyphens).
+    """
+    t = topic.strip()
+    esc = t.replace('"', r'\"')                 # escape quotes
+    compact = re.sub(r'[\s\-]+', '', esc)       # e.g., "iPhone 17" -> "iPhone17"
+    terms = [f'title:"{esc}"', f'selftext:"{esc}"', f'"{esc}"']
+    if compact.lower() != esc.lower():
+        terms.append(f'"{compact}"')
+    return "(" + " OR ".join(terms) + ")"
+
+def topic_regex(topic: str) -> re.Pattern:
+    """
+    Build a flexible regex that matches the topic across spaces/hyphens.
+    e.g., "iPhone 17 Pro" matches "iphone-17  pro".
+    """
+    tokens = re.findall(r'\w+', topic, flags=re.UNICODE)
+    if not tokens:
+        tokens = [topic]
+    pattern = r"\b" + r"[\s\-]*".join(map(re.escape, tokens)) + r"\b"
+    return re.compile(pattern, re.IGNORECASE)
+
 def fetch_pool(topic: str) -> pd.DataFrame:
+    QUERY = lucene_query_for_topic(topic)       # topic is the free text input from the user
+    TITLE_BODY_MATCH = topic_regex(topic)
     rows = []
     for s in reddit.subreddit("all").search(
-        query=topic, sort="top", time_filter="month", syntax="lucene", limit=None
+        query=QUERY, sort="top", time_filter="month", syntax="lucene", limit=None
     ):
+        title = s.title or ""
+        selftext = s.selftext or ""
+        if not (TITLE_BODY_MATCH.search(title) or TITLE_BODY_MATCH.search(selftext)):
+            continue
         rows.append({
             "submission_id": f"t3_{s.id}",
             "topic": topic,

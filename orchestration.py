@@ -5,6 +5,7 @@ import numpy as np
 from pymongo import UpdateOne
 import streamlit as st
 import saspy
+from pathlib import Path
 import matplotlib.pyplot as plt
 
 # Your modules
@@ -82,9 +83,9 @@ def load_daily(topic: str) -> pd.DataFrame:
 
 def load_forecast(topic: str) -> pd.DataFrame:
     coll = db["forecasts"]
-    docs = list(coll.find({"topic": topic}, {"_id":0, "date":1, "forecast":1, "l95":1, "u95":1}))
+    docs = list(coll.find({"topic": topic}, {"_id":0, "date":1, "forecast":1, "error":1}))
     if not docs:
-        return pd.DataFrame(columns=["date","forecast","l95","u95"])
+        return pd.DataFrame(columns=["date","forecast","error"])
     return pd.DataFrame(docs).sort_values("date")
 
 def plot_series(daily_df: pd.DataFrame, f_df: pd.DataFrame):
@@ -94,23 +95,75 @@ def plot_series(daily_df: pd.DataFrame, f_df: pd.DataFrame):
     if not f_df.empty and "forecast" in f_df:
         x = pd.to_datetime(f_df["date"])
         ax.plot(x, f_df["forecast"], linestyle="--", label="SAS forecast")
-        if {"l95","u95"}.issubset(set(f_df.columns)):
-            ax.fill_between(x, f_df["l95"], f_df["u95"], alpha=0.2, label="95% band")
     ax.set_ylabel("Sentiment (−1..1)")
     ax.set_xlabel("Date")
     ax.set_title("30-day Sentiment & Forecast")
     ax.grid(True, alpha=0.3)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
     ax.legend()
     st.pyplot(fig)
 
-def run_sas_forecast(topic: str):
-    sas = saspy.SASsession(cfgname="viya")
-    sas.symput("TOPIC", topic)
-    sas.symput("HORIZON", "14")
-    log = sas.submit("""
-        %include '/path/to/sas/fetch_forecast_push.sas';
-    """)
-    return log['LOG']
+def run_sas_forecast_separated(topic: str, sasfile_path: Path, horizon: int = 5) -> pd.DataFrame:
+    """
+    Orchestrates SAS forecasting using a separate .sas file (no PROC PYTHON inside SAS).
+    Returns the forecast DataFrame with columns [date, forecast, l95, u95].
+    """
+    # --- 1) Read daily metrics from Mongo ---
+    rows = list(db["Daily_Metrics"].find(
+        {"topic": topic}, {"_id": 0, "date": 1, "sentiment_index": 1}))
+    if not rows:
+        raise RuntimeError(f"No Daily_Metrics for topic '{topic}'. Run aggregation first.")
+    df = pd.DataFrame(rows).sort_values("date")
+
+    # Convert to SAS date
+    df["date_sas"] = pd.to_datetime(df["date"])
+    df["date_sas"] = (df["date_sas"] - pd.Timestamp("1960-01-01")) // pd.Timedelta(days=1)
+    df = df[["date", "date_sas", "sentiment_index"]]
+
+    # --- 2) Open SAS session and upload WORK.DAILY ---
+    sas = saspy.SASsession()
+    sas.df2sd(df, table="DAILY", libref="WORK")
+
+
+    # --- 3) Run the pure-SAS forecast file ---
+    sas.symput("HORIZON", str(horizon))
+    sas.symput("SASFILE", str(sasfile_path))
+    log = sas.submit(r'''
+        %put NOTE: Including &SASFILE.;
+        %include "&SASFILE.";
+    ''')["LOG"]
+
+
+    print(log)
+
+    # --- 4) Pull results back to Python ---
+    fcast = sas.sd2df(table="to_write",libref="work")
+    if fcast.empty:
+        raise RuntimeError("Forecast returned no rows (check SAS log and input data).")
+
+    # --- 5) Write back to Mongo (forecasts collection) ---
+    ops = []
+
+    df["date_n"] = pd.to_datetime(df["date"])
+
+    last_date = df["date_n"].max()
+
+    future_dates = np.append(df["date"].values,[(last_date + pd.Timedelta(days=i)).strftime("%Y-%m-%d") for i in range(1, horizon+1)])
+
+    for i, r in fcast.iterrows():
+        ops.append({
+            "topic": topic,
+            "date": future_dates[i],
+            "forecast":r["PREDICT"],
+            "error":r["ERROR"]
+        })
+    if ops:
+        print (ops)
+        result= db["forecasts"].insert_many(ops)
+        print ("inserted count: ", len(result.inserted_ids))
+
+    return fcast
 
 # ---------- UI ----------
 st.title("🔎 Reddit Topic Insight (30-day on-demand)")
@@ -143,11 +196,6 @@ if st.button("3) Aggregate daily metrics"):
     except Exception as e:
         st.error(f"Aggregation failed: {e}")
 
-if st.button("4) Run SAS Forecast"):
-    with st.spinner("Running SAS forecast..."):
-        log = run_sas_forecast(topic)
-    st.text_area("SAS Log", log, height=250)
-
 daily_df = load_daily(topic)
 f_df = load_forecast(topic)
 
@@ -176,5 +224,12 @@ else:
     else:
         st.write("No posts for that day yet.")
 
-st.markdown("**Step 4 (Forecast):** open `sas/fetch_forecast_push.sas` in Viya Workbench, set `TOPIC`, run it, then refresh this page to see the overlay.")
+if st.button("4) Run SAS Forecast (separated .sas)"):
+    try:
+        SASFILE = Path(__file__).resolve().parent / "sas_tools" / "forecast.sas"
+        fc = run_sas_forecast_separated(topic, SASFILE, horizon=5)
+        st.success(f"Forecast rows: {len(fc)} (written to 'forecasts').")
+    except Exception as e:
+        st.error(f"SAS forecast failed: {e}")
+
 st.markdown("**Note:** this is a demo app. The analysis quality depends on the Gemini model and prompt, which you can customize in `Agents/post_analysis.py`.")
