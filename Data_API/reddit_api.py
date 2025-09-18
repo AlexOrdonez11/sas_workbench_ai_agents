@@ -4,6 +4,7 @@ import pandas as pd
 from datetime import datetime, timezone
 from pymongo import UpdateOne
 from Data_API.db import posts_collection
+
 # Create a Reddit instance
 reddit = praw.Reddit(
     client_id=os.getenv("reddit_id"),
@@ -13,17 +14,18 @@ reddit = praw.Reddit(
     password=os.getenv("reddit_pass")
 )
 
-# Test the connection: print your own username
+# Test the connection: print username
 print(reddit.user.me())
 
 def lucene_query_for_topic(topic: str) -> str:
     """
+    For reddit appropiate search to get only relevant posts
     Build a strict Lucene query targeting both title and selftext.
     Handles phrases and a compact variant (no spaces/hyphens).
     """
     t = topic.strip()
-    esc = t.replace('"', r'\"')                 # escape quotes
-    compact = re.sub(r'[\s\-]+', '', esc)       # e.g., "iPhone 17" -> "iPhone17"
+    esc = t.replace('"', r'\"')
+    compact = re.sub(r'[\s\-]+', '', esc)
     terms = [f'title:"{esc}"', f'selftext:"{esc}"', f'"{esc}"']
     if compact.lower() != esc.lower():
         terms.append(f'"{compact}"')
@@ -41,7 +43,10 @@ def topic_regex(topic: str) -> re.Pattern:
     return re.compile(pattern, re.IGNORECASE)
 
 def fetch_pool(topic: str) -> pd.DataFrame:
-    QUERY = lucene_query_for_topic(topic)       # topic is the free text input from the user
+    """
+    Get relevat reddit posts and return a Dataframe with he information
+    """
+    QUERY = lucene_query_for_topic(topic)
     TITLE_BODY_MATCH = topic_regex(topic)
     rows = []
     for s in reddit.subreddit("all").search(
@@ -67,16 +72,18 @@ def fetch_pool(topic: str) -> pd.DataFrame:
         })
     return pd.DataFrame(rows)
 
-def insert_posts(TOPIC:str):
-    
-    pool = fetch_pool(TOPIC)
+def insert_posts(topic:str):
+    """
+    Insert posts in the mongodb Posts Collection
+    """
+    pool = fetch_pool(topic)
     pool = pool[pool["over_18"] == False].copy()
 
     # top-5 per day by score
     top5 = (pool.sort_values(["date","score"], ascending=[True, False])
                 .groupby("date").head(5).reset_index(drop=True))
 
-    # Upsert posts (idempotent by submission_id)
+    # Upsert posts
     ops = []
     for doc in top5.to_dict("records"):
         sid = doc["submission_id"]

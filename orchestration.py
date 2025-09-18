@@ -7,19 +7,18 @@ import streamlit as st
 import saspy
 from pathlib import Path
 import matplotlib.pyplot as plt
-
-# Your modules
 from Data_API.db import db, posts_collection, daily_collection  
 from Data_API.reddit_api import insert_posts                   
 from Agents.post_analysis import insert_analysis               
 
+# title
 st.set_page_config(page_title="Reddit 30-Day Topic Insight", layout="wide")
 
 # ---------- Helpers ----------
 def aggregate_daily_metrics(topic: str):
     """
     Reads analyzed posts for the topic from 'Posts' and upserts 1 doc/day into 'Daily_Metrics'.
-    Assumes 'analysis' subdocument exists on each post (from insert_analysis()).
+    Must be called after getting the reddit information.
     """
     cur = posts_collection.find(
         {"topic": topic, "analysis": {"$exists": True}},
@@ -46,6 +45,8 @@ def aggregate_daily_metrics(topic: str):
         sentiment_index = float(g["sentiment_score"].mean())
         def frac(col, val): 
             return float((g[col] == val).mean()) if n else 0.0
+
+        # Avg sentiment for the day based on labels
         label_dist = {
             "positive": frac("sentiment_label", "positive"),
             "neutral":  frac("sentiment_label", "neutral"),
@@ -75,6 +76,7 @@ def aggregate_daily_metrics(topic: str):
     return len(daily_docs)
 
 def load_daily(topic: str) -> pd.DataFrame:
+    # Get data from daily metrics table
     docs = list(daily_collection.find({"topic": topic}, {"_id":0, "date":1, "sentiment_index":1}))
     if not docs:
         return pd.DataFrame(columns=["date","sentiment_index"])
@@ -82,6 +84,7 @@ def load_daily(topic: str) -> pd.DataFrame:
     return df
 
 def load_forecast(topic: str) -> pd.DataFrame:
+    # load data from the forecast table
     coll = db["forecasts"]
     docs = list(coll.find({"topic": topic}, {"_id":0, "date":1, "forecast":1, "error":1}))
     if not docs:
@@ -89,6 +92,7 @@ def load_forecast(topic: str) -> pd.DataFrame:
     return pd.DataFrame(docs).sort_values("date")
 
 def plot_series(daily_df: pd.DataFrame, f_df: pd.DataFrame):
+    # plot actual values vs predicted sentiment
     fig, ax = plt.subplots()
     if not daily_df.empty:
         ax.plot(pd.to_datetime(daily_df["date"]), daily_df["sentiment_index"], marker="o", label="Daily index")
@@ -106,8 +110,8 @@ def plot_series(daily_df: pd.DataFrame, f_df: pd.DataFrame):
 
 def run_sas_forecast_separated(topic: str, sasfile_path: Path, horizon: int = 5) -> pd.DataFrame:
     """
-    Orchestrates SAS forecasting using a separate .sas file (no PROC PYTHON inside SAS).
-    Returns the forecast DataFrame with columns [date, forecast, l95, u95].
+    Orchestrates SAS forecasting using a separate .sas file
+    Returns the forecast DataFrame with columns [date, forecast, error].
     """
     # --- 1) Read daily metrics from Mongo ---
     rows = list(db["Daily_Metrics"].find(

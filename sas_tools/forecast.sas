@@ -13,7 +13,7 @@ proc esm data=work.daily outfor=work.sent_forecast lead=&HORIZON out=_null_ prin
   forecast sentiment_index / model=damptrend transform=None;
 run;
 
-/* Keep future rows with forecasts and emit ISO dates */
+/*--Return forcasting values--*/
 data work.to_write;
   set work.sent_forecast;
 run;

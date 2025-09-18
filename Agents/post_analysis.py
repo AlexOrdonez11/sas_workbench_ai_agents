@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 from Data_API.db import posts_collection as posts_coll, daily_collection as daily_coll
 
+# declaring gemini variables
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 GEM_MODEL = genai.GenerativeModel(model_name="gemini-2.5-flash")
 
@@ -32,6 +33,7 @@ Required schema:
 Return nothing but the JSON object.
 """
 
+# function in progress to parallelize the reviews analysis
 def make_batch_payload(items):
     # items: list[{"id": "...", "title": "...", "selftext": "..."}]
     lines = [SYSTEM]
@@ -58,6 +60,7 @@ def clean_and_parse_json(raw_str: str):
         raise ValueError(f"Invalid JSON format: {e}")
 
 def analyze_text(text: str) -> dict:
+    # Call Gemini model and handle response
     if not text.strip():
         return {
             "sentiment_score": 0.0,
