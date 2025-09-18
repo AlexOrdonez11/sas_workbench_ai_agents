@@ -12,20 +12,19 @@ The whole flow can be launched from a single Streamlit interface.
 ## Project structure
 
 sas_workbench_ai_agents/
-│
-├── Agents/
-│ └── post_analysis.py # Gemini-based sentiment & topic analysis
-│
-├── Data_API/
-│ ├── db.py # MongoDB connection helpers
-│ └── reddit_api.py # Reddit API fetch of top posts/comments
-│
-├── sas_tools/
-│ └── forecast.sas # Pure SAS file: ESM forecast & confidence bands
-│
-├── orchestration.py # Streamlit app: user input → Reddit fetch → analysis → SAS forecast
-│
-└── README.md # Project documentation
+- Agents/
+  - post_analysis.py # Gemini-based sentiment & topic analysis
+
+- Data_API/
+  - db.py # MongoDB connection helpers
+  - reddit_api.py # Reddit API fetch of top posts/comments
+    
+- sas_tools/
+  - forecast.sas # Pure SAS file: ESM forecast & confidence bands
+
+- orchestration.py # Streamlit app: user input → Reddit fetch → analysis → SAS forecast
+
+- README.md # Project documentation
 
 ---
 
